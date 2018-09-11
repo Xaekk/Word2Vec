@@ -5,6 +5,8 @@ import re
 from tqdm import tqdm
 import tensorflow as tf
 import math
+from scipy.spatial.distance import pdist
+import numpy as np
 import random
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -131,11 +133,11 @@ def pre_word_2_vec_wordlist_window():
                             word_x_y.append([map_word_id[word], map_word_id[wordlcut[index + size + 1]]])
     return word_x_y
 
-batch_position = 0
-#TODO:
-word_x_y_list = pre_word_2_vec_wordlist_window()
+word_x_y_list = None
 def get_batch(batch_size):
-    global batch_position
+    global word_x_y_list
+    if word_x_y_list == None:
+        word_x_y_list = pre_word_2_vec_wordlist_window()
     lenght = len(word_x_y_list)
     inputs = []
     labels = []
@@ -143,9 +145,6 @@ def get_batch(batch_size):
         x_y = word_x_y_list[random.randint(0, lenght-1)]
         inputs.append(x_y[0])
         labels.append([x_y[1]])
-        batch_position += 1
-        if batch_position >= lenght:
-            batch_position = 0
     return inputs, labels
 
 
@@ -178,9 +177,13 @@ def word2vec():
 
     return train_inputs, train_labels, nce_weights, nce_biases, embed, vocabulary_size
 
-
+# ===========================================================  GO  ================================================================================================================
 # 训练
 def train():
+    """
+    训练入口
+    :return:
+    """
     batch_size = 500
     num_sampled = 64 # 负样本数量
     # 计算 NCE 损失函数, 每次使用负标签的样本.
@@ -207,6 +210,10 @@ def train():
 
 
 def check_model():
+    """
+    查看模型
+    :return:
+    """
     ckpt = tf.train.get_checkpoint_state("./save")  # 确定最新的参数文件
 
     with tf.Session() as sess:
@@ -219,6 +226,10 @@ def check_model():
         print('result: {}, label:{}'.format(result, labels[0]))
 
 def load_tensorboard():
+    """
+    载入Tensorboard
+    :return:
+    """
     ckpt = tf.train.get_checkpoint_state("./save")  # 确定最新的参数文件
 
     with tf.Session() as sess:
@@ -232,6 +243,52 @@ def load_tensorboard():
         writer.close()
 
 
+def cosine_similarity():
+    """
+    余弦相似度
+    :return:
+    """
+    # 待搜索的词
+    keyWord = '产权'
+    # 余弦范围
+    boundary = 0.4
+
+    ckpt = tf.train.get_checkpoint_state("./save")  # 确定最新的参数文件
+
+    print('Load Model ... ')
+    with tf.Session() as sess:
+        # inputs, labels = get_batch(1)
+        words = pyDBC.get_all(table='tool_word_embadding', columns=['id', 'keyWord'])
+        words = [[id, keyWord_] for id, keyWord_ in words]
+        saver = tf.train.import_meta_graph('{}.meta'.format(ckpt.model_checkpoint_path))
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        embed = tf.get_collection('embed')[0]
+        train_inputs = tf.get_collection('train_inputs')[0]
+
+        print('Prepare word ...')
+        for index, word in enumerate(words):
+            result = sess.run(embed, feed_dict={train_inputs: [word[0]]})
+            # try:
+            #     result = sess.run(embed, feed_dict={train_inputs: [word[0]]})
+            # except BaseException:
+            #     print(index, word)
+            #     exit()
+            words[index].append(result[0])
+
+        for word in words:
+            if word[1] == keyWord:
+                target_word = word
+
+        print('Result coming ... ')
+        boundary_word = []
+        for word in words:
+            X = np.vstack([target_word[2], word[2]])
+            d2 = 1 - pdist(X, 'cosine')
+            if d2[0] > boundary:
+                boundary_word.append([word[1], d2])
+        for word in boundary_word:
+            print(word)
+
 
 if __name__ == '__main__':
     # statistics_word()
@@ -240,8 +297,9 @@ if __name__ == '__main__':
     # print('/'.join(jieba.cut('每周三小时', cut_all=False)))
     # fun()
     # get_batch(500)
-    train()
+    # train()
     # check_model()
     # load_tensorboard()
+    cosine_similarity()
 
 pyDBC.close()
